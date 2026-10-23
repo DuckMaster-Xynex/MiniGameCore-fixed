@@ -142,6 +142,7 @@ public final class MiniGameCommand implements CommandExecutor {
                                 }
                             }
                             lobby.addPlayer(player1);
+                            PlayerHandler.saveInventoryIfAbsent(player1);
                             if (world == null) {
                                 plugin.getLogger().warning("World was null! Teleporting to Owner instead. Lobby: " + lobby.getLobbyId() + ", State: " + lobby.getLobbyState());
                                 player1.teleport(lobby.getOwner().getLocation());
@@ -221,6 +222,7 @@ public final class MiniGameCommand implements CommandExecutor {
                                 }
                             }
                             lobby.addPlayer(player1);
+                            PlayerHandler.saveInventoryIfAbsent(player1);
                             if (world == null) {
                                 plugin.getLogger().warning("World was null! Teleporting to Owner instead. Lobby: " + lobby.getLobbyId() + ", State: " + lobby.getLobbyState());
                                 player1.teleport(lobby.getOwner().getLocation());
@@ -244,6 +246,8 @@ public final class MiniGameCommand implements CommandExecutor {
                     sendMGCError(player, "Could not join the lobby.");
                     return true;
                 }
+
+                PlayerHandler.saveInventoryIfAbsent(player);
                 for (Player gamer : lobby.getPlayers()) {
                     gamer.sendMessage("§8[§6MiniGameCore§8]§a " + player.getName() + " joined! " + lobby.getPlayers().size() + "/" + lobby.getMaxPlayers() + " players.");
                 }
