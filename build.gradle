@@ -21,7 +21,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.papermc.paper:paper-api:26.1.2.build.53-stable")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.34-alpha")
 }
 
 tasks {
