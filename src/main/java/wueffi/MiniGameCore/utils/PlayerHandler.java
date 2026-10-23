@@ -1,3 +1,4 @@
+
 package wueffi.MiniGameCore.utils;
 
 import org.bukkit.Bukkit;
@@ -6,12 +7,19 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.plugin.Plugin;
 import wueffi.MiniGameCore.MiniGameCore;
 import wueffi.MiniGameCore.managers.GameManager;
 import wueffi.MiniGameCore.managers.LobbyManager;
 import wueffi.MiniGameCore.managers.PartyManager;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public final class PlayerHandler implements Listener {
 
@@ -20,8 +28,33 @@ public final class PlayerHandler implements Listener {
     private static final PartyManager partyManager =
             MiniGameCore.getPlugin().getPartyManager();
 
+    private static final Map<UUID, InventorySnapshot> savedInventories =
+            new HashMap<>();
+
     public PlayerHandler(Plugin plugin2) {
         plugin = plugin2;
+    }
+
+    /**
+     * Save a player's original inventory once, before they enter a minigame.
+     * Repeated calls must not overwrite the original snapshot with a game inventory.
+     */
+    public static void saveInventoryIfAbsent(Player player) {
+        savedInventories.computeIfAbsent(
+                player.getUniqueId(),
+                ignored -> new InventorySnapshot(player)
+        );
+    }
+
+    /**
+     * Restore and remove the saved snapshot, if one exists.
+     */
+    public static void restoreInventory(Player player) {
+        InventorySnapshot snapshot = savedInventories.remove(player.getUniqueId());
+
+        if (snapshot != null) {
+            snapshot.restore(player);
+        }
     }
 
     public static void PlayerReset(Player player) {
@@ -30,14 +63,9 @@ public final class PlayerHandler implements Listener {
 
         if (lobby != null) {
             GameConfig config =
-                    GameManager.loadGameConfigFromWorld(
-                            lobby.getWorldFolder());
+                    GameManager.loadGameConfigFromWorld(lobby.getWorldFolder());
 
-            if (config == null) {
-                return;
-            }
-
-            if (config.getTeams() > 0) {
+            if (config != null && config.getTeams() > 0) {
                 Team team = lobby.getTeamByPlayer(player);
 
                 if (team != null) {
@@ -45,9 +73,8 @@ public final class PlayerHandler implements Listener {
                         team.decreaseAlive();
                     } else {
                         plugin.getLogger().warning(
-                                "Failed to remove player "
-                                        + player
-                                        + " from Team!");
+                                "Failed to remove player " + player + " from Team!"
+                        );
                     }
                 }
             }
@@ -57,7 +84,8 @@ public final class PlayerHandler implements Listener {
 
                 for (Player player1 : lobby.getPlayers()) {
                     player1.sendMessage(
-                            "§8[§6MiniGameCore§8]§c Owner of the lobby left... resetting");
+                            "§8[§6MiniGameCore§8]§c Owner of the lobby left... resetting"
+                    );
                 }
 
                 LobbyHandler.LobbyReset(lobby);
@@ -74,7 +102,8 @@ public final class PlayerHandler implements Listener {
             if (player == party.getOwner()) {
                 for (Player partyplayer : party.getPlayers()) {
                     partyplayer.sendMessage(
-                            "§8[§6MiniGameCore§8]§c Owner of the party left... resetting");
+                            "§8[§6MiniGameCore§8]§c Owner of the party left... resetting"
+                    );
                 }
 
                 partyManager.removeParty(party.getPartyId());
@@ -83,14 +112,12 @@ public final class PlayerHandler implements Listener {
             }
         }
 
-        // Offline players are handled by Minecraft and
-        // Multiverse-Inventories. Do not reset them here.
+        // A disconnected player is restored after they next join.
         if (!player.isOnline()) {
             return;
         }
 
         PlayerSoftReset(player);
-
         player.setGameMode(Bukkit.getDefaultGameMode());
 
         World mainWorld = Bukkit.getWorlds().getFirst();
@@ -98,21 +125,32 @@ public final class PlayerHandler implements Listener {
         if (mainWorld != null) {
             Location spawn = mainWorld.getSpawnLocation();
             player.teleport(spawn);
+
+            // Restore after the teleport so world inventory handlers have run.
+            Bukkit.getScheduler().runTaskLater(
+                    plugin,
+                    () -> {
+                        if (player.isOnline()) {
+                            restoreInventory(player);
+                        }
+                    },
+                    2L
+            );
+        } else {
+            restoreInventory(player);
         }
     }
 
     public static void PlayerSoftReset(Player player) {
-        // Reset player status without modifying their inventory.
-        // BedWars and Multiverse-Inventories manage inventory changes.
-
+        // Reset status only. Do not clear or replace the player's inventory.
+        // BedWars and Multiverse-Inventories can manage their own inventories.
         player.setHealth(20);
         player.setFoodLevel(20);
         player.setSaturation(5);
 
         player.getActivePotionEffects().forEach(
-                potionEffect ->
-                        player.removePotionEffect(
-                                potionEffect.getType()));
+                potionEffect -> player.removePotionEffect(potionEffect.getType())
+        );
 
         player.setFireTicks(0);
         player.setExp(0);
@@ -123,15 +161,73 @@ public final class PlayerHandler implements Listener {
     public void onPlayerLeave(PlayerQuitEvent event) {
         Player player = event.getPlayer();
 
-        GameManager.removeLastHitAndFrozen(
-                player.getUniqueId());
-
-        GameManager.playerDeath(
-                player.getUniqueId());
+        GameManager.removeLastHitAndFrozen(player.getUniqueId());
+        GameManager.playerDeath(player.getUniqueId());
 
         Bukkit.getScheduler().runTaskLater(
                 plugin,
                 () -> PlayerReset(player),
-                5L);
+                5L
+        );
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+
+        // A snapshot may remain if the player disconnected during a minigame.
+        Bukkit.getScheduler().runTaskLater(
+                plugin,
+                () -> {
+                    if (player.isOnline()) {
+                        restoreInventory(player);
+                    }
+                },
+                2L
+        );
+    }
+
+    private static final class InventorySnapshot {
+        private final ItemStack[] storage;
+        private final ItemStack[] armor;
+        private final ItemStack[] extra;
+        private final ItemStack cursor;
+
+        private InventorySnapshot(Player player) {
+            PlayerInventory inventory = player.getInventory();
+
+            storage = cloneItems(inventory.getStorageContents());
+            armor = cloneItems(inventory.getArmorContents());
+            extra = cloneItems(inventory.getExtraContents());
+            cursor = cloneItem(player.getItemOnCursor());
+        }
+
+        private void restore(Player player) {
+            PlayerInventory inventory = player.getInventory();
+
+            inventory.setStorageContents(cloneItems(storage));
+            inventory.setArmorContents(cloneItems(armor));
+            inventory.setExtraContents(cloneItems(extra));
+            player.setItemOnCursor(cloneItem(cursor));
+            player.updateInventory();
+        }
+
+        private static ItemStack[] cloneItems(ItemStack[] items) {
+            if (items == null) {
+                return null;
+            }
+
+            ItemStack[] copy = new ItemStack[items.length];
+
+            for (int i = 0; i < items.length; i++) {
+                copy[i] = cloneItem(items[i]);
+            }
+
+            return copy;
+        }
+
+        private static ItemStack cloneItem(ItemStack item) {
+            return item == null ? null : item.clone();
+        }
     }
 }
