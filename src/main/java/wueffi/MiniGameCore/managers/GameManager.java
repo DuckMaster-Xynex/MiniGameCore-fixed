@@ -341,6 +341,9 @@ public final class GameManager implements Listener {
             plugin.getLogger().warning("Failed to load copied world: " + newWorldName);
             return null;
         } else {
+            // Save the normal inventory before teleporting into the minigame world.
+            PlayerHandler.saveInventoryIfAbsent(player);
+
             Location spawnLocation = newWorld.getSpawnLocation();
             player.teleport(spawnLocation);
             PlayerSoftReset(player);
