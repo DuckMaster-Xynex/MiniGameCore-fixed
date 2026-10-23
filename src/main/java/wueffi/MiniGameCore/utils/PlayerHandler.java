@@ -1,4 +1,3 @@
-
 package wueffi.MiniGameCore.utils;
 
 import org.bukkit.Bukkit;
@@ -7,43 +6,36 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import wueffi.MiniGameCore.MiniGameCore;
 import wueffi.MiniGameCore.managers.GameManager;
 import wueffi.MiniGameCore.managers.LobbyManager;
 import wueffi.MiniGameCore.managers.PartyManager;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
 public final class PlayerHandler implements Listener {
+
     private static Plugin plugin;
+
     private static final PartyManager partyManager =
             MiniGameCore.getPlugin().getPartyManager();
-
-    private static final Map<UUID, InventorySnapshot> savedInventories =
-            new HashMap<>();
 
     public PlayerHandler(Plugin plugin2) {
         plugin = plugin2;
     }
 
     public static void PlayerReset(Player player) {
-        // Capture before any reset can clear the player's items.
-        saveInventoryIfAbsent(player);
-
         Lobby lobby = LobbyManager.getLobbyByPlayer(player);
         Party party = PartyManager.getPartyByPlayer(player);
 
         if (lobby != null) {
             GameConfig config =
-                    GameManager.loadGameConfigFromWorld(lobby.getWorldFolder());
+                    GameManager.loadGameConfigFromWorld(
+                            lobby.getWorldFolder());
 
-            if (config == null) return;
+            if (config == null) {
+                return;
+            }
 
             if (config.getTeams() > 0) {
                 Team team = lobby.getTeamByPlayer(player);
@@ -53,7 +45,9 @@ public final class PlayerHandler implements Listener {
                         team.decreaseAlive();
                     } else {
                         plugin.getLogger().warning(
-                                "Failed to remove player " + player + " from Team!");
+                                "Failed to remove player "
+                                        + player
+                                        + " from Team!");
                     }
                 }
             }
@@ -89,11 +83,14 @@ public final class PlayerHandler implements Listener {
             }
         }
 
-        // Offline players are restored by onPlayerJoin instead.
-        // Do not clear their saved snapshot.
-        if (!player.isOnline()) return;
+        // Offline players are handled by Minecraft and
+        // Multiverse-Inventories. Do not reset them here.
+        if (!player.isOnline()) {
+            return;
+        }
 
         PlayerSoftReset(player);
+
         player.setGameMode(Bukkit.getDefaultGameMode());
 
         World mainWorld = Bukkit.getWorlds().getFirst();
@@ -102,13 +99,11 @@ public final class PlayerHandler implements Listener {
             Location spawn = mainWorld.getSpawnLocation();
             player.teleport(spawn);
         }
-
-        restoreInventory(player);
     }
 
     public static void PlayerSoftReset(Player player) {
-        // Save only once: later resets must not overwrite the original items.
-        saveInventoryIfAbsent(player);
+        // Reset player status without modifying their inventory.
+        // BedWars and Multiverse-Inventories manage inventory changes.
 
         player.setHealth(20);
         player.setFoodLevel(20);
@@ -116,113 +111,27 @@ public final class PlayerHandler implements Listener {
 
         player.getActivePotionEffects().forEach(
                 potionEffect ->
-                        player.removePotionEffect(potionEffect.getType()));
+                        player.removePotionEffect(
+                                potionEffect.getType()));
 
         player.setFireTicks(0);
         player.setExp(0);
         player.setLevel(69);
-
-        player.getInventory().clear();
-        player.getInventory().setArmorContents(null);
-        player.setItemOnCursor(null);
     }
 
     @EventHandler
     public void onPlayerLeave(PlayerQuitEvent event) {
         Player player = event.getPlayer();
 
-        // Capture immediately while handling the quit event.
-        saveInventoryIfAbsent(player);
+        GameManager.removeLastHitAndFrozen(
+                player.getUniqueId());
 
-        GameManager.removeLastHitAndFrozen(player.getUniqueId());
-        GameManager.playerDeath(player.getUniqueId());
+        GameManager.playerDeath(
+                player.getUniqueId());
 
         Bukkit.getScheduler().runTaskLater(
-                plugin, () -> PlayerReset(player), 5L);
-    }
-
-    @EventHandler
-    public void onPlayerJoin(PlayerJoinEvent event) {
-        Player player = event.getPlayer();
-
-        // Run next tick so the player has completed joining.
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (player.isOnline()) {
-                restoreInventory(player);
-            }
-        });
-    }
-
-    private static void saveInventoryIfAbsent(Player player) {
-        savedInventories.computeIfAbsent(
-                player.getUniqueId(),
-                uuid -> new InventorySnapshot(
-                        cloneItems(player.getInventory().getStorageContents()),
-                        cloneItems(player.getInventory().getArmorContents()),
-                        cloneItem(player.getInventory().getItemInOffHand()),
-                        cloneItems(player.getEnderChest().getContents()),
-                        cloneItem(player.getItemOnCursor())
-                )
-        );
-    }
-
-    private static void restoreInventory(Player player) {
-        UUID uuid = player.getUniqueId();
-        InventorySnapshot snapshot = savedInventories.get(uuid);
-
-        if (snapshot == null) return;
-
-        player.getInventory().setStorageContents(
-                cloneItems(snapshot.storage));
-
-        player.getInventory().setArmorContents(
-                cloneItems(snapshot.armor));
-
-        player.getInventory().setItemInOffHand(
-                cloneItem(snapshot.offHand));
-
-        player.getEnderChest().setContents(
-                cloneItems(snapshot.enderChest));
-
-        player.setItemOnCursor(cloneItem(snapshot.cursor));
-        player.updateInventory();
-
-        // Remove the snapshot only after restoration.
-        savedInventories.remove(uuid);
-    }
-
-    private static ItemStack cloneItem(ItemStack item) {
-        return item == null ? null : item.clone();
-    }
-
-    private static ItemStack[] cloneItems(ItemStack[] items) {
-        ItemStack[] copy = new ItemStack[items.length];
-
-        for (int i = 0; i < items.length; i++) {
-            copy[i] = cloneItem(items[i]);
-        }
-
-        return copy;
-    }
-
-    private static final class InventorySnapshot {
-        private final ItemStack[] storage;
-        private final ItemStack[] armor;
-        private final ItemStack offHand;
-        private final ItemStack[] enderChest;
-        private final ItemStack cursor;
-
-        private InventorySnapshot(
-                ItemStack[] storage,
-                ItemStack[] armor,
-                ItemStack offHand,
-                ItemStack[] enderChest,
-                ItemStack cursor) {
-            this.storage = storage;
-            this.armor = armor;
-            this.offHand = offHand;
-            this.enderChest = enderChest;
-            this.cursor = cursor;
-        }
+                plugin,
+                () -> PlayerReset(player),
+                5L);
     }
 }
